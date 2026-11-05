@@ -1,0 +1,43 @@
+# Bake output, derived from game files: never commit.
+/sprites/
+/data/*
+# Except the item base and tables we ship.
+!/data/slots.json
+!/data/bundles.json
+!/data/sizes.json
+!/data/sights.json
+!/data/ammo.json
+!/data/tables-version.txt
+!/data/items-base.json
+
+# Unity
+/baker/[Ll]ibrary/
+/baker/[Tt]emp/
+/baker/[Oo]bj/
+/baker/[Bb]uild/
+/baker/[Ll]ogs/
+/baker/[Uu]serSettings/
+/baker/[Mm]emoryCaptures/
+*.csproj
+*.sln
+*.suo
+*.user
+*.pidb
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+sysinfo.txt
+*.unitypackage
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
