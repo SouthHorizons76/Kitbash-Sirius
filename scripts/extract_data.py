@@ -9,7 +9,8 @@ Emits:
   data/sights.json   SightMod templates, "iron" or "sight", for auto-folding sights
   data/ammo.json     magazine capacities and chambers, and the ammo each accepts
 
-  data/tables-version.txt  the client the item base is for
+  data/tables-version.txt  the client the item base is for, also stamped into the
+                           main heading of README.md and README_ZH.md
 
 None contains game assets - only derived tables (ids, slot names, paths,
 dependency edges).
@@ -25,6 +26,7 @@ shipped data/items-base.json. A plain {template id: template} file works too.
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 
 WEAPON_PARENT = "5422acb9af1c889c16000029"  # BSG's "Weapon" base node
@@ -41,7 +43,9 @@ THERMAL_VISION_PARENT = "5d21f59b6dbe99052b54ef83"
 ARMORED_EQUIPMENT_PARENT = "57bef4c42459772e8d35a53b"
 
 
-DATA = Path(__file__).resolve().parent.parent / "data"
+ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "data"
+READMES = (ROOT / "README.md", ROOT / "README_ZH.md")
 DEFAULT_GAME = Path(os.environ.get("KITBASH_GAME_ROOT", "C:/Battlestate Games/Escape from Tarkov"))
 
 
@@ -216,6 +220,22 @@ def measure(root: Path, key: str) -> int:
     return 0
 
 
+def stamp_readmes(version: str):
+    """Put the client version into each README's main heading ("# Kitbash! Sirius for EFT
+    version 1.3.0.1.48558"), so the front page names the client the tables are for."""
+    heading = re.compile(rb"^(# [^\r\n]*Kitbash! Sirius[^\r\n]*?)\d+(?:\.\d+){3,}", re.M)
+    for path in READMES:
+        if not path.exists():
+            continue
+        raw = path.read_bytes()
+        stamped, n = heading.subn(lambda m: m.group(1) + version.encode(), raw, count=1)
+        if not n:
+            print(f"no version in the heading of {path.name}; left as is")
+        elif stamped != raw:
+            path.write_bytes(stamped)
+            print(f"stamped {path.name} with {version}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--game", type=Path, default=DEFAULT_GAME,
@@ -268,6 +288,8 @@ def main():
     if version:
         (args.out / "tables-version.txt").write_text(version + "\n", encoding="utf-8", newline="\n")
         print(f"tables for client {version}")
+        if args.out.resolve() == DATA:  # only the repo's own tables speak for its READMEs
+            stamp_readmes(version)
     for name in ("slots.json", "bundles.json", "sizes.json", "sights.json", "ammo.json"):
         print(f"wrote {args.out / name}  ({(args.out / name).stat().st_size / 1024:.0f} KB)")
 

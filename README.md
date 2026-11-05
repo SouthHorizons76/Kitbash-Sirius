@@ -5,7 +5,9 @@
   </picture>
 </p>
 
-# Kitbash! Sirius
+<p align="center"><a href="README.md">English</a> · <a href="README_ZH.md">中文</a></p>
+
+# Kitbash! Sirius for EFT version 1.3.0.1.48558
 
 Kitbash! Sirius draws Escape from Tarkov weapon builds as 2D images, framed like the
 game's own item icons. Kitbash! Sirius is the public version of the rendering engine behind
@@ -151,8 +153,9 @@ Atlas opens each change set to the public a few hours after the patch. `update_i
 stops at the first set that isn't open yet and says when it opens. If you have an Atlas
 key, pass it with `--key` (or set `ATLAS_KEY`) to read those sets right away.
 
-Your rebuilt tables replace the shipped ones in your copy, so run `git restore data`
-before your next `git pull`.
+Your rebuilt tables replace the shipped ones in your copy, and `extract_data.py`
+stamps your client's version into the README headings, so run
+`git restore data README.md README_ZH.md` before your next `git pull`.
 
 ## Notes
 
