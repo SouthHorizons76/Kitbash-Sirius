@@ -48,6 +48,7 @@ baker/      Unity project. Bakes the sprites. Bake time only.
 kitbash/    The compositor. Python, import it in-process.
 scripts/    Data extraction and bake tooling.
 spec/       manifest.md: the contract between the baker and the compositor.
+            character.md: how character headshots and full-body images are made.
 data/       Item base and tables (shipped), plus what the bake generates (not committed).
 sprites/    Baked sprites (not committed).
 ```
@@ -57,7 +58,8 @@ sprites/    Baked sprites (not committed).
 The item tables the bake needs (`data/slots.json`, `bundles.json`, `sizes.json`,
 `sights.json` and `ammo.json`: ids, slot names, bundle paths and sizes, no assets)
 ship with the repository, for the client version in `data/tables-version.txt`, along
-with the item base they're built from (`data/items-base.json`).
+with the item base they're built from (`data/items-base.json`, which also holds the
+customization templates the character bake reads).
 
 1. **Point the baker at the game.** Set `KITBASH_GAME_ROOT` to the folder that holds
    `EscapeFromTarkov.exe` (it defaults to `C:\Battlestate Games\Escape from Tarkov`).
@@ -112,6 +114,56 @@ To show them down, set it on every attachment:
 items = [items[0]] + [{**it, "upd": {**(it.get("upd") or {}), "Togglable": {"On": True}}} for it in items[1:]]
 ```
 
+## Characters
+
+Kitbash! also draws a player's character from a profile: the **headshot** the trader
+screen shows (500 x 500, matching the game's own), and a **full-body** image
+(788 x 1238). These use the same approach as weapons: every head, body suit, pair of
+pants and piece of worn gear is baked once, in every variant the rest of the outfit can
+call for (under armor, hood up or down, clipped by a face cover, and so on). A
+character is then stacked from those sprites by depth. How the pieces are chosen is in
+[spec/character.md](spec/character.md).
+
+### Baking
+
+The character bake needs only the item base and `data/slots.json`, not
+`Inspect All`. In Unity, with the game root set as above:
+
+```
+Unity: Kitbash! / Bake Character Headshots (all)
+python -m kitbash.character pack headshot      # PNG to lossless WebP
+Unity: Kitbash! / Bake Character Full Body (all)
+python -m kitbash.character pack full
+```
+
+Each view is about 2,900 sprites (roughly 200 MB once packed) and writes
+`sprites/character/<view>/` plus `data/character.manifest.json` (headshot) or
+`data/character-full.manifest.json` (full body). Bake only the view you need. A bake
+replaces that view's sprites, so rebake it whole after a patch that adds outfits or
+gear. The `(test kit)` menu items bake one outfit, which is handy for checking your
+setup, and `Kitbash! / Character Test Render` renders a dressed character directly in
+Unity, as the reference to compare composited images with (`data/render/character/`).
+
+### Rendering
+
+```python
+from kitbash.character import CharacterCompositor
+
+cc = CharacterCompositor("headshot")  # or "full"
+image = cc.render(
+    {"head": head_id, "body": body_id, "feet": feet_id},  # customization template ids
+    equipment,  # the profile's inventory items
+)
+image.save("headshot.webp")
+```
+
+`equipment` is a list of items in the game's internal format (`_id`, `_tpl`, `slotId`,
+`parentId`, optional `upd`). Worn items are the ones in the `ArmorVest`,
+`TacticalVest`, `Backpack`, `Headwear`, `Earpiece`, `Eyewear`, `FaceCover` and
+`ArmBand` slots, and their attachments are their children. Anything else is ignored.
+Face shields and NVGs follow `Togglable.On` as on helmet icons. Carried weapons aren't
+drawn yet, and the headshot always uses the armed pose. A composite takes about 0.2 s.
+
 ## Updating for a game patch
 
 When a patch adds items, this repository (hopefully) gets updated tables and a new
@@ -147,7 +199,10 @@ python scripts/extract_data.py      # rewrites the tables and data/tables-versio
 ```
 
 Then bake what's new, as above. The next `update_items.py` run continues from your
-`data/items.json`.
+`data/items.json`. It updates the customization templates as well. If your
+`data/items.json` was written before the character bake existed, the next run picks up
+the fields it lacks from the shipped base, as long as both are at the same Atlas set.
+Otherwise it asks you to start again from the shipped base.
 
 Atlas opens each change set to the public a few hours after the patch. `update_items.py`
 stops at the first set that isn't open yet and says when it opens. If you have an Atlas

@@ -7,7 +7,9 @@ Atlas (https://www.eftforge.com/atlas) publishes every change to the game's item
 as a change set. This replays the sets newer than our item base onto it and writes
 data/items.json, which extract_data.py then turns into the tables the bake reads.
 
-The base is data/items.json when it exists (your last update), else the shipped
+The base holds the item templates ("items") and the customization templates
+("customization": heads, bodies, feet), which the character bake reads. It is
+data/items.json when it exists (your last update), else the shipped
 data/items-base.json. Both keep only the fields Kitbash! reads (see trim()).
 
 Atlas opens a set to the public some hours after it appears. Sets still locked are
@@ -30,11 +32,19 @@ SHIPPED = DATA / "items-base.json"
 LOCAL = DATA / "items.json"
 ATLAS = "https://www.eftforge.com/atlas/api"
 ITEMS_FILE = "client/items"
+CUSTOM_FILE = "client/customization"
+# Atlas file -> the base's key for it.
+FILES = {ITEMS_FILE: "items", CUSTOM_FILE: "customization"}
 
-# The item fields extract_data.py reads. Everything else is dropped from the base.
+# The item fields extract_data.py and the character bake read (the latter: what the
+# outfit rules and carried weapons depend on). Everything else is dropped from the base.
 KEEP_PROPS = {"Prefab", "Slots", "Chambers", "Cartridges", "Width", "Height", "Foldable", "MergesWithChildren",
               "MagazineWithBelt", "FaceShieldComponent", "HasHinge", "ExtraSizeLeft", "ExtraSizeRight",
-              "ExtraSizeUp", "ExtraSizeDown", "ExtraSizeForceAdd"}
+              "ExtraSizeUp", "ExtraSizeDown", "ExtraSizeForceAdd",
+              "MaterialType", "IsHalfMask", "ConflictingItems", "BlocksHeadwear",
+              "LeanWeaponAgainstBody", "DisplayOnModel", "UseAltMountBone"}
+# The customization fields the character bake reads.
+CUSTOM_KEEP_PROPS = {"BodyPart", "Prefab", "IntegratedArmorVest"}
 HOLDERS = ("Slots", "Chambers", "Cartridges")
 MISSING = object()
 
@@ -53,8 +63,8 @@ def trim_holder(s: dict) -> dict:
     return out
 
 
-def trim(template: dict) -> dict:
-    props = {k: v for k, v in (template.get("_props") or {}).items() if k in KEEP_PROPS}
+def trim(template: dict, keep: set = KEEP_PROPS) -> dict:
+    props = {k: v for k, v in (template.get("_props") or {}).items() if k in keep}
     for k in HOLDERS:
         if isinstance(props.get(k), list):
             props[k] = [trim_holder(s) for s in props[k] if isinstance(s, dict)]
@@ -145,8 +155,21 @@ def main():
 
     base_path = a.base or (LOCAL if LOCAL.exists() else SHIPPED)
     base = json.loads(base_path.read_text(encoding="utf-8"))
-    items = base["items"]
     print(f"base {base_path.name}: client {base['version']}, Atlas set {base['set']} ({base['detected']})")
+    # A base written before the character fields were kept (no customization, fewer item
+    # fields) is replaced by the shipped base when both are at the same set; otherwise
+    # there is no telling what changed in between.
+    upgraded = False
+    if "customization" not in base:
+        shipped = json.loads(SHIPPED.read_text(encoding="utf-8"))
+        if shipped.get("set") != base["set"] or "customization" not in shipped:
+            sys.exit(f"{base_path.name} predates the character fields. Start again from the shipped "
+                     f"base: delete data/items.json, git pull and rerun.")
+        base = shipped
+        upgraded = True
+        print(f"  without the character fields: continuing from {SHIPPED.name}, at the same set")
+    items = base["items"]
+    tables = {key: base[key] for key in FILES.values()}
 
     index = get(f"{ATLAS}/index", a.key)
     if base["set"] not in {s["id"] for s in index["sets"]}:
@@ -155,7 +178,7 @@ def main():
                  f"there. Start again from the shipped base: delete data/items.json and git pull.")
     newer = sorted((s for s in index["sets"] if when(s["detected"]) > when(base["detected"])),
                    key=lambda s: when(s["detected"]))
-    if not newer:
+    if not newer and not upgraded:
         print("already up to date")
         return
 
@@ -167,8 +190,8 @@ def main():
             print(f"set {s['id']} ({s['version']}) opens to the public at {s.get('public_at')}; "
                   f"{len(newer) - newer.index(s)} set(s) left. Rerun then, or use --key.")
             break
-        n = s["files"].get(ITEMS_FILE)
-        if n:
+        counts = {f: s["files"][f] for f in FILES if s["files"].get(f)}
+        if counts:
             body = get(f"{ATLAS}/sets/{s['id']}", a.key)
             values = {}
 
@@ -181,14 +204,19 @@ def main():
                     return values[ref]
                 return v
 
-            skipped = sum(apply(items, f["changes"], resolve) for f in body["files"] if f["file"] == ITEMS_FILE)
-            print(f"set {s['id']} ({s['version']}): {n} item changes, {n - skipped} kept")
+            for file, n in counts.items():
+                skipped = sum(apply(tables[FILES[file]], f["changes"], resolve)
+                              for f in body["files"] if f["file"] == file)
+                print(f"set {s['id']} ({s['version']}): {n} {FILES[file]} changes, {n - skipped} kept")
         applied = s
 
     if not applied:
-        return
+        if not upgraded:
+            return
+        applied = {"version": base["version"], "id": base["set"], "detected": base["detected"]}
     out = {"version": applied["version"], "set": applied["id"], "detected": applied["detected"],
-           "items": {t: trim(v) for t, v in items.items()}}
+           "items": {t: trim(v) for t, v in items.items()},
+           "customization": {t: trim(v, CUSTOM_KEEP_PROPS) for t, v in tables["customization"].items()}}
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(out, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
     print(f"wrote {a.out}: client {out['version']}, {len(items)} templates ({len(items) - before:+d})")

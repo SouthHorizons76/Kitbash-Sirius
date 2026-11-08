@@ -29,6 +29,15 @@ public class BundleLoader : IDisposable
             _deps[kv.Key] = ((JArray)kv.Value).Select(d => (string)d).ToList();
     }
 
+    /// Adds the dependencies of bundles outside data/bundles.json (which holds only
+    /// the items' closure) from the client's own manifest, Windows.json.
+    public void AddManifest(string windowsJsonPath)
+    {
+        foreach (var kv in JObject.Parse(File.ReadAllText(windowsJsonPath)))
+            if (!_deps.ContainsKey(kv.Key) && kv.Value["Dependencies"] is JArray d)
+                _deps[kv.Key] = d.Select(x => (string)x).ToList();
+    }
+
     public IEnumerable<string> LoadedKeys => _loaded.Keys;
 
     public IEnumerable<string> DepsOf(string key) =>
@@ -172,6 +181,26 @@ public class BundleLoader : IDisposable
     public static bool HasMesh(Renderer r) =>
         r is SkinnedMeshRenderer sk ? sk.sharedMesh != null
         : r is MeshRenderer && r.TryGetComponent(out MeshFilter f) && f.sharedMesh != null;
+
+    /// Unloads every loaded bundle except those listed and their dependency closures.
+    /// Instances from the unloaded bundles must be destroyed first.
+    public void UnloadExcept(IEnumerable<string> keep)
+    {
+        var closure = new HashSet<string>();
+        void Add(string k)
+        {
+            if (!closure.Add(k)) return;
+            foreach (var d in DepsOf(k)) Add(d);
+        }
+        foreach (var k in keep) Add(k);
+        foreach (var k in _loaded.Keys.Where(k => !closure.Contains(k)).ToList())
+        {
+            if (_loaded[k] != null) _loaded[k].Unload(true);
+            _loaded.Remove(k);
+        }
+    }
+
+    public int LoadedCount => _loaded.Count;
 
     public void Dispose()
     {

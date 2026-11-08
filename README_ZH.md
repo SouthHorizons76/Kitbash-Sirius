@@ -34,13 +34,14 @@ baker/      Unity 项目，用于烘焙精灵图，仅烘焙时使用。
 kitbash/    合成器，Python，在进程内导入使用。
 scripts/    数据提取与烘焙工具。
 spec/       manifest.md：烘焙器与合成器之间的约定。
+            character.md：角色头像与全身图的生成方式。
 data/       物品数据底本与物品表（随仓库提供），以及烘焙生成的文件（不提交）。
 sprites/    烘焙出的精灵图（不提交）。
 ```
 
 ## 首次烘焙
 
-烘焙所需的物品表（`data/slots.json`、`bundles.json`、`sizes.json`、`sights.json` 和 `ammo.json`：只有 ID、槽位名、资源包路径和尺寸，不含任何资源）随仓库提供，对应 `data/tables-version.txt` 中的客户端版本，同时附带生成它们所用的物品数据底本（`data/items-base.json`）。
+烘焙所需的物品表（`data/slots.json`、`bundles.json`、`sizes.json`、`sights.json` 和 `ammo.json`：只有 ID、槽位名、资源包路径和尺寸，不含任何资源）随仓库提供，对应 `data/tables-version.txt` 中的客户端版本，同时附带生成它们所用的物品数据底本（`data/items-base.json`，其中也包含角色烘焙所需的外观模板）。
 
 1. **让烘焙器找到游戏。** 将 `KITBASH_GAME_ROOT` 设为 `EscapeFromTarkov.exe` 所在的文件夹（默认为 `C:\Battlestate Games\Escape from Tarkov`）。设置后需要同时重启 Unity Hub 和编辑器，否则 Unity 会沿用旧的环境变量。
 
@@ -82,6 +83,38 @@ image.save("build.webp")
 items = [items[0]] + [{**it, "upd": {**(it.get("upd") or {}), "Togglable": {"On": True}}} for it in items[1:]]
 ```
 
+## 角色
+
+Kitbash! 还可以根据玩家档案绘制角色：商人界面显示的**头像**（500 x 500，与游戏自身一致），以及一张**全身图**（788 x 1238）。做法与武器相同：每个头部、上身服装、裤子和穿戴装备都会烘焙一次，涵盖整套装扮可能需要的每种变体（穿在护甲下、兜帽戴上或放下、被面罩裁切等），之后按深度叠放这些精灵图组成角色。各部件如何选择见 [spec/character.md](spec/character.md)。
+
+### 烘焙
+
+角色烘焙只需要物品数据底本和 `data/slots.json`，不需要运行 `Inspect All`。按上文设置好游戏路径后，在 Unity 中：
+
+```
+Unity: Kitbash! / Bake Character Headshots (all)
+python -m kitbash.character pack headshot      # PNG 转为无损 WebP
+Unity: Kitbash! / Bake Character Full Body (all)
+python -m kitbash.character pack full
+```
+
+每种视图约 2,900 张精灵图（打包后约 200 MB），写出 `sprites/character/<视图>/`，以及 `data/character.manifest.json`（头像）或 `data/character-full.manifest.json`（全身）。只烘焙你需要的视图即可。每次烘焙都会替换该视图的全部精灵图，因此在加入新服装或装备的版本更新后，需要整体重新烘焙。`(test kit)` 菜单项只烘焙一套装扮，便于检查环境配置；`Kitbash! / Character Test Render` 会直接在 Unity 中渲染一个穿戴好的角色，作为与合成结果对照的参考（`data/render/character/`）。
+
+### 渲染
+
+```python
+from kitbash.character import CharacterCompositor
+
+cc = CharacterCompositor("headshot")  # or "full"
+image = cc.render(
+    {"head": head_id, "body": body_id, "feet": feet_id},  # customization template ids
+    equipment,  # the profile's inventory items
+)
+image.save("headshot.webp")
+```
+
+`equipment` 是游戏内部格式的物品列表（`_id`、`_tpl`、`slotId`、`parentId`，可选 `upd`）。穿戴物品是位于 `ArmorVest`、`TacticalVest`、`Backpack`、`Headwear`、`Earpiece`、`Eyewear`、`FaceCover` 和 `ArmBand` 槽位中的物品，它们的子项即为其配件，其余物品会被忽略。面罩和夜视仪与头盔图标一样遵循 `Togglable.On`。携带的武器暂不绘制，头像始终使用持枪姿势。每次合成约 0.2 秒。
+
 ## 游戏更新
 
 当版本更新加入新物品时，本仓库会提供更新后的物品表和新的 `data/tables-version.txt`。拉取更新、更新游戏，然后烘焙新增内容即可。新物品只需要烘焙它们自己的精灵图，已有精灵图的索引保持不变：
@@ -107,7 +140,7 @@ python scripts/update_items.py      # 写出 data/items.json
 python scripts/extract_data.py      # 重写物品表和 data/tables-version.txt
 ```
 
-然后按上文烘焙新增内容。下次运行 `update_items.py` 时会从你的 `data/items.json` 继续。
+然后按上文烘焙新增内容。下次运行 `update_items.py` 时会从你的 `data/items.json` 继续。它也会一并更新外观模板。如果你的 `data/items.json` 写于角色烘焙加入之前，只要它与随仓库提供的底本处于同一个 Atlas 变更集，下次运行时就会从底本补上缺少的字段；否则它会提示你从随仓库提供的底本重新开始。
 
 Atlas 会在版本更新数小时后向公众开放每个变更集。`update_items.py` 会在第一个尚未开放的变更集处停下，并告诉你它何时开放。如果你有 Atlas 密钥，可以用 `--key` 传入（或设置 `ATLAS_KEY`），即可立即读取这些变更集。
 
