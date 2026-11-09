@@ -41,3 +41,4 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
+/data/character.subset.json

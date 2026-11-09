@@ -129,7 +129,14 @@ folder (`sprites/character/headshot`, `sprites/character/full`).
 The headshot bake: 2,822 sprites (colour and depth), 194 MB. The bake writes
 PNG; `python -m kitbash.character pack [headshot|full]` then converts them to lossless WebP
 (identical pixels, two thirds the size, about 25 s), which is what the
-compositor reads. Two placements of
+compositor reads.
+
+To rebake a few pieces, not the ~15 min of every one:
+`python -m kitbash.character subset <suit id | item tpl> ...` writes
+`data/character.subset.json`; `Kitbash! / Bake Character Subset (both views)` bakes
+only those into both views, merging into the existing manifests (an entry that now
+bakes to nothing is removed), and deletes sprites no entry names any more; then pack
+both views. Bake `(all)` when a change reaches every piece. Two placements of
 one model at the same pose share a sprite, which folds about 6,000 attachment
 placements (a helmet's colourways repeat every part).
 

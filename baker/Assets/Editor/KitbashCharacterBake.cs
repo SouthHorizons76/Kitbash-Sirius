@@ -22,6 +22,9 @@
 // <piece>.depth.png (depth, code = round((z - depthOrigin) * depthScale), 0 where
 // nothing drew; R high byte, G low), and the view's manifest.
 // Menu: Kitbash! / Bake Character Headshots | Full Body (test kit | all)
+//       Kitbash! / Bake Character Subset (both views): only data/character.subset.json's
+//       suits and items, merged into the existing manifests; sprites no entry names
+//       any more are deleted.
 
 using System;
 using System.Collections.Generic;
@@ -94,6 +97,9 @@ public static class KitbashCharacterBake
     [MenuItem("Kitbash!/Bake Character Full Body (all)")]
     static void FullAll() => Run(Full, false);
 
+    [MenuItem("Kitbash!/Bake Character Subset (both views)")]
+    static void SubsetBoth() => RunSubset(Headshot, Full);
+
     /// The full body: orthographic, from the front, the character turned as item
     /// icons are, under the item icon rig's lights (no shadows).
     static PlayerIcon.Layers CaptureFull(GameObject character)
@@ -144,7 +150,48 @@ public static class KitbashCharacterBake
         public int Captured, Shared, Empty;
     }
 
-    static void Run(View view, bool testKit)
+    static string SubsetPath => Path.Combine(DataDir, "character.subset.json");
+
+    /// The ids of data/character.subset.json: head, body and feet suits and worn
+    /// item templates, mixed (python -m kitbash.character subset writes it).
+    static HashSet<string> LoadSubset()
+    {
+        if (!File.Exists(SubsetPath)) { Debug.LogError($"no {SubsetPath}: python -m kitbash.character subset <id> ..."); return null; }
+        var ids = JObject.Parse(File.ReadAllText(SubsetPath))["ids"] as JArray;
+        if (ids == null || ids.Count == 0) { Debug.LogError($"{SubsetPath} lists no ids"); return null; }
+        return new HashSet<string>(ids.Select(i => (string)i));
+    }
+
+    static void RunSubset(params View[] views)
+    {
+        var only = LoadSubset();
+        if (only != null) foreach (var v in views) Run(v, false, only);
+    }
+
+    /// After a subset merges in: drops pieces no entry names any more, and their files.
+    /// A piece is a sprite name; entries name them as string values anywhere inside.
+    static void DropUnused(JObject manifest, string outDir, List<string> log)
+    {
+        var pieces = (JObject)manifest["pieces"];
+        var used = new HashSet<string>();
+        foreach (var part in new[] { "heads", "bodies", "feet", "items" })
+            if (manifest[part] is JToken t)
+                foreach (var v in t.SelectTokens("..*").OfType<JValue>())
+                    if (v.Type == JTokenType.String && pieces.ContainsKey((string)v)) used.Add((string)v);
+        var gone = pieces.Properties().Select(p => p.Name).Where(n => !used.Contains(n)).ToList();
+        foreach (var n in gone)
+        {
+            pieces.Remove(n);
+            foreach (var ext in new[] { ".png", ".webp", ".depth.png", ".depth.webp" })
+            {
+                var f = Path.Combine(outDir, n + ext);
+                if (File.Exists(f)) File.Delete(f);
+            }
+        }
+        log.Insert(0, $"subset: {gone.Count} sprites no longer used, removed");
+    }
+
+    static void Run(View view, bool testKit, HashSet<string> only = null)
     {
         var (items0, custom0) = KitbashCharacter.ItemBase();
         var ctx = new Ctx
@@ -157,9 +204,13 @@ public static class KitbashCharacterBake
         var outDir = view.OutDir;
         var manifestPath = Path.Combine(DataDir, view.Manifest);
         Directory.CreateDirectory(outDir);
-        foreach (var f in Directory.GetFiles(outDir)) File.Delete(f);
+        // A subset merges into the existing manifest, so it needs one with its sprites.
+        var old = only != null && File.Exists(manifestPath) ? JObject.Parse(File.ReadAllText(manifestPath)) : null;
+        if (only != null && old == null) { Debug.LogError($"subset bake: no {manifestPath} to merge into; bake (all) first"); return; }
+        if (only == null)
+            foreach (var f in Directory.GetFiles(outDir)) File.Delete(f);
 
-        // What to bake: every head, body and wearable template, or the test kit's.
+        // What to bake: every head, body and wearable template, the test kit's, or the subset's.
         var parts = new Dictionary<string, List<string>>
         {
             ["head"] = Customizations(ctx, "Head"),
@@ -167,6 +218,14 @@ public static class KitbashCharacterBake
             ["feet"] = view.Feet ? Customizations(ctx, "Feet") : new List<string>(),
         };
         var worn = Slots.ToDictionary(s => s, s => SlotTemplates(ctx.Items, s));
+        if (only != null)
+        {
+            foreach (var k in parts.Keys.ToList()) parts[k] = parts[k].Where(only.Contains).ToList();
+            foreach (var s in Slots) worn[s] = worn[s].Where(only.Contains).ToList();
+            var found = new HashSet<string>(parts.Values.SelectMany(l => l).Concat(worn.Values.SelectMany(l => l)));
+            foreach (var id in only.Where(i => !found.Contains(i)))
+                ctx.Log.Add($"subset: {id} is no {(view.Feet ? "head, body, feet" : "head, body")} suit or wearable template; skipped");
+        }
         if (testKit)
         {
             parts["head"] = new List<string> { KitbashCharacter.Defaults["head"] };
@@ -190,10 +249,14 @@ public static class KitbashCharacterBake
         };
         if (view == Full)
             manifest["frame"] = new JArray(FullFrame.xMin, FullFrame.yMin, FullFrame.width, FullFrame.height);
-        var heads = new JObject();
-        var bodies = new JObject();
-        var feet = new JObject();
-        var items = new JObject();
+        // A subset starts from the old entries and pieces; what it bakes replaces them.
+        var heads = old?["heads"] as JObject ?? new JObject();
+        var bodies = old?["bodies"] as JObject ?? new JObject();
+        var feet = old?["feet"] as JObject ?? new JObject();
+        var items = old?["items"] as JObject ?? new JObject();
+        if (old?["pieces"] is JObject oldPieces) ctx.Pieces = oldPieces;
+        // One that now bakes to nothing (skipped) loses its old entry.
+        void Put(JObject into, string id, JObject e) { if (e != null) into[id] = e; else into.Remove(id); }
 
         using (var loader = new BundleLoader(BundleRoot, BundlesJson))
         using (var rig = new KitbashRig())   // black ambient, as the icons render
@@ -224,15 +287,14 @@ public static class KitbashCharacterBake
                     return EditorUtility.DisplayCancelableProgressBar($"Kitbash! character {view.Name}",
                         $"{done}/{total} {what} ({ctx.Captured} sprites)", (float)done / total);
                 }
-                foreach (var id in parts["head"]) { if (Step("head")) return; if (BakeSuit(ctx, "head", id) is JObject e) heads[id] = e; }
-                foreach (var id in parts["body"]) { if (Step("body")) return; if (BakeSuit(ctx, "body", id) is JObject e) bodies[id] = e; }
-                foreach (var id in parts["feet"]) { if (Step("feet")) return; if (BakeSuit(ctx, "feet", id) is JObject e) feet[id] = e; }
+                foreach (var id in parts["head"]) { if (Step("head")) return; Put(heads, id, BakeSuit(ctx, "head", id)); }
+                foreach (var id in parts["body"]) { if (Step("body")) return; Put(bodies, id, BakeSuit(ctx, "body", id)); }
+                foreach (var id in parts["feet"]) { if (Step("feet")) return; Put(feet, id, BakeSuit(ctx, "feet", id)); }
                 foreach (var s in Slots)
                     foreach (var tpl in worn[s])
                     {
                         if (Step(s)) return;
-                        var e = BakeItem(ctx, s, tpl);
-                        if (e != null) items[tpl] = e;
+                        Put(items, tpl, BakeItem(ctx, s, tpl));
                     }
             }
             finally
@@ -244,6 +306,7 @@ public static class KitbashCharacterBake
                 if (view.Feet) manifest["feet"] = feet;
                 manifest["items"] = items;
                 manifest["pieces"] = ctx.Pieces;
+                if (only != null) DropUnused(manifest, outDir, ctx.Log);
                 File.WriteAllText(manifestPath, manifest.ToString(Formatting.Indented));
             }
         }
@@ -295,7 +358,7 @@ public static class KitbashCharacterBake
             // Suits rigged to another skeleton (the zombies' skips a spine bone) are
             // never worn by a player.
             if (tally[2] > 0) { ctx.Log.Add($"{part} {ctx.Custom[id]["_name"]}: skipped, {tally[2]} bones missing"); return null; }
-            foreach (var g in inst.GetComponentsInChildren<LODGroup>(false)) g.ForceLOD(0);
+            foreach (var g in inst.GetComponentsInChildren<LODGroup>(true)) g.ForceLOD(0);
             var own = Drawn(inst);
             var entry = new JObject();
             var variants = new JObject();
@@ -497,7 +560,10 @@ public static class KitbashCharacterBake
                         child.transform.localRotation = placer != null ? Quaternion.Euler(placer.ModRotation) : AttachRotation;
                         foreach (var g in child.GetComponentsInChildren<LODGroup>(false)) g.ForceLOD(0);
                         var cnode = new JObject();
-                        BakeNode(ctx, child, cmodel, c, $"{path}/{sid}/{c}", cnode, depth + 1, true);
+                        // the hinge state is part of the placement: a face shield down and the
+                        // same one up are two sprites, which one name would let overwrite each other
+                        var cpath = hinged ? $"{path}/{h}:{sid}/{c}" : $"{path}/{sid}/{c}";
+                        BakeNode(ctx, child, cmodel, c, cpath, cnode, depth + 1, true);
                         accepted[c] = cnode;
                     }
                     finally { Object.DestroyImmediate(child); }

@@ -281,15 +281,23 @@ public static class KitbashCharacter
         var tally = new int[3];
         foreach (var lodded in suit.GetComponentsInChildren<LoddedSkin>(true))
             BindLods(lodded.name, lodded._lods, skeleton, tally, log);
-        foreach (var g in suit.GetComponentsInChildren<LODGroup>(false)) g.ForceLOD(0);
+        foreach (var g in suit.GetComponentsInChildren<LODGroup>(true)) g.ForceLOD(0);
         return $"{tally[0]} skins, {tally[1]} bones bound, {tally[2]} missing";
     }
 
     /// Binds each level of detail: every bone name looked up in the
-    /// skeleton. The first level drawn, the rest off. tally: skins, bound, missing.
+    /// skeleton. The top level drawn, the rest off. tally: skins, bound, missing.
+    /// The list can hold more than one set of levels (a suit's hood up and down
+    /// are both in it), so a skin is a lower level only when its LOD group puts
+    /// it below LOD 0; with no group, or one that would leave nothing drawn (the
+    /// zombies' list their only mesh at LOD 1), everything after the first entry is.
     internal static void BindLods(string owner, AbstractSkin[] lods, Skeleton skeleton, int[] tally, List<string> log)
     {
         lods = lods ?? new AbstractSkin[0];
+        var group = lods.FirstOrDefault(l => l != null)?.GetComponentInParent<LODGroup>(true);
+        var lower = new HashSet<Renderer>(group == null ? new Renderer[0]
+            : group.GetLODs().Skip(1).SelectMany(l => l.renderers).Where(r => r != null));
+        if (lods.Select(l => Inner(l)?._skinnedMeshRenderer).All(r => r == null || lower.Contains(r))) group = null;
         for (int i = 0; i < lods.Length; i++)
         {
             var skin = Inner(lods[i]);
@@ -299,7 +307,7 @@ public static class KitbashCharacter
                 continue;
             }
             var smr = skin._skinnedMeshRenderer;
-            if (i > 0) { smr.enabled = false; continue; }
+            if (group != null ? lower.Contains(smr) : i > 0) { smr.enabled = false; continue; }
             var bones = new Transform[skin._bonePaths?.Length ?? 0];
             for (int j = 0; j < bones.Length; j++)
             {

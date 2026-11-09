@@ -188,8 +188,24 @@ def _pack_one(f: Path) -> int:
     return 1
 
 
+def write_subset(ids: list[str]) -> Path:
+    """Writes data/character.subset.json for Unity's Kitbash! / Bake Character Subset:
+    head, body and feet suit ids and worn item templates, mixed."""
+    path = REPO / "data" / "character.subset.json"
+    path.write_text(json.dumps({"ids": sorted(set(ids))}, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+USAGE = """usage: python -m kitbash.character pack [headshot|full]
+       python -m kitbash.character subset <suit id | item tpl> ..."""
+
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) not in (2, 3) or sys.argv[1] != "pack" or sys.argv[2:] not in ([], ["headshot"], ["full"]):
-        sys.exit("usage: python -m kitbash.character pack [headshot|full]")
-    print(pack(*sys.argv[2:]), "sprites packed")
+    args = sys.argv[1:]
+    if args[:1] == ["subset"] and len(args) > 1:
+        print(write_subset(args[1:]), "written; then Unity: Kitbash! / Bake Character Subset (both views),"
+              " then pack headshot and full")
+    elif args[:1] == ["pack"] and args[1:] in ([], ["headshot"], ["full"]):
+        print(pack(*args[1:]), "sprites packed")
+    else:
+        sys.exit(USAGE)
